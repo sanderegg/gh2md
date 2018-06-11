@@ -10,7 +10,7 @@ import traceback
 from github import Github
 from retrying import retry
 
-from . import templates_markdown
+import templates_markdown
 
 ENV_GITHUB_TOKEN = "GITHUB_ACCESS_TOKEN"
 GITHUB_ACCESS_TOKEN_PATH = os.path.expanduser(os.path.join("~", ".github-token"))
@@ -36,6 +36,10 @@ def main():
         output_path=args.outpath,
         gh_login_user=args.login_user,
         gh_token=args.token,
+        copy_comments=args.copy_comments,
+        open_issues_only=args.open_issues_only,
+        milestone_title=args.milestone,
+        fetch_description=args.description,
     )
 
 
@@ -77,10 +81,49 @@ def parse_args(args):
         action='store',
         dest='token',
     )
+    parser.add_argument(
+        '-c',
+        '--comments',
+        help='Does not copy comments in the markdown output.',
+        type=bool,
+        default=False,
+        action='store',
+        dest='copy_comments',
+    )
+    parser.add_argument(
+        '-o',
+        '--open_only',
+        help='Only fetches open issues.',
+        type=bool,
+        default=False,
+        action='store',
+        dest='open_issues_only',
+    )
+    parser.add_argument(
+        '-m',
+        '--milestone',
+        help='Only fetches entries linked to defined milestone',
+        type=str,
+        default="*",
+        action='store',
+        dest='milestone'
+    )
+    parser.add_argument(
+        '-d',
+        '--description',
+        help='fetch descriptions',
+        type=bool,
+        default=False,
+        action='store',
+        dest='description',
+    )
     return parser.parse_args(args)
 
 
-def fetch_repo_and_export_to_markdown(repo_string, output_path, gh_login_user=None, gh_token=None):
+def fetch_repo_and_export_to_markdown(repo_string, output_path, 
+                                        gh_login_user=None, gh_token=None, 
+                                        copy_comments=True, open_issues_only=False,
+                                        milestone_title=None, fetch_description=False):
     if not gh_token:
         gh_token = get_environment_token()
     repo, github_api = get_github_repo(
@@ -92,18 +135,38 @@ def fetch_repo_and_export_to_markdown(repo_string, output_path, gh_login_user=No
     export_issues_to_markdown_file(
         repo=repo,
         outpath=output_path,
+        copy_comments=copy_comments,
+        open_issues_only=open_issues_only,
+        milestone_title=milestone_title,
+        fetch_description=fetch_description,
     )
     print_rate_limit(github_api)
     print("Done.")
 
 
-def export_issues_to_markdown_file(repo, outpath):
+def export_issues_to_markdown_file(repo, 
+                                outpath, 
+                                copy_comments, 
+                                open_issues_only, 
+                                milestone_title,
+                                fetch_description):
     formatted_issues = []
-    for issue in repo.get_issues(state='all'):
+    state='all'
+    print("copy comments set to %s, open issues set to %s, milestone title set to %s" % (copy_comments, open_issues_only, milestone_title))
+    if open_issues_only:
+        print("setting state to look for to open")
+        state = 'open'
+    milestone = "*"
+    if milestone_title:
+        milestones = [m for m in repo.get_milestones() if m.title == milestone_title]
+        if milestones:
+            milestone = milestones[0]
+
+    for issue in repo.get_issues(state=state, milestone=milestone):
         # The Github API includes pull requests as "issues". Skip
         # closed PRs, as they will add a lot of noise to the export.
         try:
-            if issue.pull_request and issue.state.lower() == 'closed':
+            if issue.pull_request and ((issue.state.lower() == 'closed') or open_issues_only):
                 continue
         except:
             traceback.print_exc()
@@ -112,7 +175,7 @@ def export_issues_to_markdown_file(repo, outpath):
 
         # Try multiple times to process the issue and append to main issue list
         try:
-            formatted_issue = process_issue_to_markdown(issue)
+            formatted_issue = 46(issue, copy_comments, fetch_description)
         except:
             traceback.print_exc()
             print("Couldn't process issue due to exceptions, skipping")
@@ -135,7 +198,7 @@ def export_issues_to_markdown_file(repo, outpath):
 
 
 @retry(stop_max_attempt_number=3, stop_max_delay=15000, wait_fixed=5000)
-def process_issue_to_markdown(issue):
+def process_issue_to_markdown(issue, copy_comments, fetch_description):
     """Given a Github Issue, return a formatted Markdown block for the issue and
     its comments.
 
@@ -144,7 +207,7 @@ def process_issue_to_markdown(issue):
 
     # Process the comments for this issue
     formatted_comments = ""
-    if issue.comments:
+    if copy_comments and issue.comments:
         comments = []
         for comment in issue.get_comments():
             print("Processing comment: {}".format(comment.html_url))
@@ -171,19 +234,35 @@ def process_issue_to_markdown(issue):
         labels = ", ".join(["`{}`".format(lab.name) for lab in issue.labels])
         labels = "**Labels**: {}\n\n".format(labels)
 
+    formated_assignees = ""
+    assignees = []
+    for assignee in issue.assignees:
+        print("Processing assignees: {}".format(assignee.html_url))
+        this_assignee = templates_markdown.ASSIGNEE.format(
+            author=assignee.name or assignee.login,
+            author_url=assignee.html_url,
+            avatar_url=assignee.avatar_url,
+        )
+        assignees.append(this_assignee.rstrip())
+
+    formated_assignees += ",".join(assignees)
+
+    body = ""
+    if fetch_description:
+        body=issue.body
+
     formatted_issue = templates_markdown.ISSUE.format(
         title=issue.title,
         date=issue.created_at.strftime('%Y-%m-%d %H:%M'),
         number=number,
         url=issue.html_url,
-        author=issue.user.name or issue.user.login,
-        author_url=issue.user.html_url,
-        avatar_url=issue.user.avatar_url,
+        assignees=formated_assignees,
         state=issue.state,
-        body=issue.body,
+        body=body,
         comments=formatted_comments,
         labels=labels,
     )
+    
     return formatted_issue.replace("\r", "")
 
 
