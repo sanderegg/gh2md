@@ -152,7 +152,7 @@ def export_issues_to_markdown_file(repo,
                                 fetch_description):
     formatted_issues = []
     state='all'
-    print("copy comments set to %s, open issues set to %s, milestone title set to %s" % (copy_comments, open_issues_only, milestone_title))
+    print("copy comments set to %s, open issues set to %s, milestone title set to %s, fetch description set to %s" % (copy_comments, open_issues_only, milestone_title, fetch_description))
     if open_issues_only:
         print("setting state to look for to open")
         state = 'open'
@@ -175,7 +175,7 @@ def export_issues_to_markdown_file(repo,
 
         # Try multiple times to process the issue and append to main issue list
         try:
-            formatted_issue = 46(issue, copy_comments, fetch_description)
+            formatted_issue = process_issue_to_markdown(issue, copy_comments, fetch_description)
         except:
             traceback.print_exc()
             print("Couldn't process issue due to exceptions, skipping")
