@@ -95,7 +95,7 @@ def parse_args(args):
         '--open_only',
         help='Only fetches open issues.',
         type=bool,
-        default=False,
+        default=True,
         action='store',
         dest='open_issues_only',
     )
